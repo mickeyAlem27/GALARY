@@ -216,19 +216,30 @@ exports.deleteMemory = async (req, res) => {
     }
 
     // Delete the associated file from Cloudinary if it exists
-    if (memory.mediaUrl) {
+    if (memory.cloudinaryPublicId) {
       try {
-        await deleteFile(memory.mediaUrl);
+        await deleteFile(memory.cloudinaryPublicId);
+        console.log(`Successfully deleted file from Cloudinary: ${memory.cloudinaryPublicId}`);
       } catch (error) {
         console.error('Error deleting file from Cloudinary:', error);
         // Continue with memory deletion even if file deletion fails
       }
+    } else if (memory.mediaUrl) {
+      console.warn('No cloudinaryPublicId found for memory, falling back to mediaUrl');
+      try {
+        await deleteFile(memory.mediaUrl);
+      } catch (error) {
+        console.error('Error deleting file from Cloudinary using mediaUrl:', error);
+      }
     }
 
-    await memory.remove();
+    // Delete the memory from the database
+    await Memory.findByIdAndDelete(req.params.id);
+    console.log(`Successfully deleted memory with ID: ${req.params.id}`);
 
     res.status(200).json({
       success: true,
+      message: 'Memory deleted successfully',
       data: {},
     });
   } catch (err) {
