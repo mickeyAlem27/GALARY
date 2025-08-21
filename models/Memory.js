@@ -21,6 +21,10 @@ const memorySchema = new mongoose.Schema({
     required: [true, 'Media type is required'],
     enum: ['image', 'video']
   },
+  cloudinaryPublicId: {
+    type: String,
+    required: true
+  },
   location: {
     type: String,
     trim: true

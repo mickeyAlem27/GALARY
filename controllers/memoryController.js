@@ -1,47 +1,104 @@
 const Memory = require('../models/Memory');
-const fs = require('fs');
-const path = require('path');
-
-// Ensure uploads directory exists
-const uploadsDir = path.join(__dirname, '../uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
+const { deleteFile } = require('../config/cloudinary');
 
 // @desc    Create a new memory
 // @route   POST /api/memories
 // @access  Public
 exports.createMemory = async (req, res) => {
+  console.log('Creating new memory...');
+  console.log('Request body:', req.body);
+  console.log('Uploaded file:', req.file);
+  
   try {
     const { title, description, location, tags } = req.body;
     
     // Check if file was uploaded
     if (!req.file) {
+      console.error('No file uploaded');
       return res.status(400).json({
         success: false,
-        error: 'Please upload a file'
+        message: 'Please upload a file',
+        error: 'NO_FILE_UPLOADED'
       });
     }
 
-    // Create memory with file path
-    const memory = await Memory.create({
-      title,
-      description,
-      location,
-      tags: tags ? tags.split(',').map(tag => tag.trim()) : [],
-      mediaUrl: `/uploads/${req.file.filename}`,
-      mediaType: req.file.mimetype.startsWith('image/') ? 'image' : 'video'
-    });
+    // Validate required fields
+    if (!title || !description) {
+      console.error('Missing required fields');
+      // Clean up uploaded file if validation fails
+      if (req.file && req.file.path) {
+        await deleteFile(req.file.path);
+      }
+      return res.status(400).json({
+        success: false,
+        message: 'Title and description are required',
+        error: 'MISSING_REQUIRED_FIELDS'
+      });
+    }
 
-    res.status(201).json({
-      success: true,
-      data: memory
-    });
+    try {
+      // Create memory with Cloudinary URL
+      const memory = await Memory.create({
+        title,
+        description,
+        location: location || 'Unknown',
+        tags: tags && typeof tags === 'string' 
+          ? tags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0)
+          : [],
+        mediaUrl: req.file.path, // Cloudinary URL
+        mediaType: req.file.mimetype.startsWith('image/') ? 'image' : 'video',
+        cloudinaryPublicId: req.file.filename // Store Cloudinary public ID for future deletion
+      });
+
+      console.log('Memory created successfully:', memory._id);
+      
+      res.status(201).json({
+        success: true,
+        message: 'Memory created successfully',
+        data: memory
+      });
+    } catch (dbError) {
+      console.error('Database error:', dbError);
+      
+      // Clean up uploaded file from Cloudinary if database operation fails
+      if (req.file && req.file.path) {
+        try {
+          await deleteFile(req.file.path);
+        } catch (deleteError) {
+          console.error('Error deleting uploaded file from Cloudinary:', deleteError);
+        }
+      }
+      
+      // Handle duplicate key errors
+      if (dbError.code === 11000) {
+        return res.status(400).json({
+          success: false,
+          message: 'A memory with this title already exists',
+          error: 'DUPLICATE_TITLE'
+        });
+      }
+      
+      throw dbError; // Let the outer catch handle it
+    }
   } catch (error) {
-    console.error('Error creating memory:', error);
-    res.status(500).json({ 
+    console.error('Error in createMemory:', error);
+    
+    // Handle specific error types
+    let statusCode = 500;
+    let errorMessage = 'An unexpected error occurred';
+    let errorCode = 'SERVER_ERROR';
+    
+    if (error.name === 'ValidationError') {
+      statusCode = 400;
+      errorMessage = 'Validation failed';
+      errorCode = 'VALIDATION_ERROR';
+    }
+    
+    res.status(statusCode).json({ 
       success: false, 
-      error: 'Server error' 
+      message: errorMessage,
+      error: errorCode,
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -154,27 +211,31 @@ exports.deleteMemory = async (req, res) => {
     if (!memory) {
       return res.status(404).json({
         success: false,
-        error: 'Memory not found'
+        message: 'Memory not found',
       });
     }
 
-    // Delete the file
-    const filePath = path.join(__dirname, '..', memory.mediaUrl);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
+    // Delete the associated file from Cloudinary if it exists
+    if (memory.mediaUrl) {
+      try {
+        await deleteFile(memory.mediaUrl);
+      } catch (error) {
+        console.error('Error deleting file from Cloudinary:', error);
+        // Continue with memory deletion even if file deletion fails
+      }
     }
 
     await memory.remove();
 
     res.status(200).json({
       success: true,
-      data: {}
+      data: {},
     });
-  } catch (error) {
-    console.error('Error deleting memory:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Server error' 
+  } catch (err) {
+    console.error('Error deleting memory:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
     });
   }
 };

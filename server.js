@@ -10,20 +10,33 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 
-// Disable mongoose buffering
 mongoose.set('bufferCommands', false);
 
 // Create Express app
 const app = express();
 
-// Middleware
+// Increase the request size limit for file uploads (50MB)
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Add request logging middleware
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  next();
+});
+
+// CORS configuration
 app.use(cors({
-  origin: '*', // Allow all origins in development
+  origin: '*', // Allow all origins
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Content-Length', 'Accept-Encoding', 'X-CSRF-Token'],
+  credentials: true,
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+// Handle preflight requests
+app.options('*', cors());
 
 // Create uploads directory if it doesn't exist
 const uploadsDir = path.join(__dirname, 'uploads');
